@@ -5,7 +5,7 @@
 
 ;; Author:	Akshay Badola <akshay.badola.cs@gmail.com>
 ;; Maintainer:	Akshay Badola <akshay.badola.cs@gmail.com>
-;; Time-stamp:	<Friday  8 January 2021 15:42:46 IST>
+;; Time-stamp:	<Saturday 09 October 2021 19:54:20 PM IST>
 ;; Keywords:	org, mu4e, mail, org-mime
 ;; Version:     0.2.0
 
@@ -37,11 +37,13 @@
 ;; There are also subroutines for including org links mentioned in text and
 ;; attaching files automatically via some cloud platform.
 ;;
-;; There's also a python script which allows you to mail the buffer with gmail
-;; and XOAUTH2.
+;; There's also a python script `gmailer.py' which allows you to mail the buffer
+;; with gmail and XOAUTH2 with the credentials being fetched from `pass'
+;; password store or plain text.
 
 ;;; Code:
 
+(require 'sendmail)
 (require 'dash)
 (require 'org)
 (require 'org-mime)
@@ -54,6 +56,11 @@
   "Text File in `org-mailer-links-cache' format." ;
   :type 'file
   :group 'org-mailer)
+
+(defcustom org-gmailer-addr ""
+  "Address for the http gmail service."
+  :type 'string
+  :group 'org-gmailer)
 
 (defvar org-mailer-links-cache nil
   "A hash table mapping local files to a remote cache.
@@ -308,7 +315,193 @@ links cache is loaded and before it's exported to html."
         (goto-char (point-min))
         (switch-to-buffer mu4e-export-buf)))))
 
+;; TODO: How to make this async?
+;; TODO: For some reason .tmpmail-* buffers are left hanging around
+(defun org-mailer-send-via-gmailer ()
+  "Send mail via gmailer.
+Mostly adapted from `smtpmail-send-it'.
+
+The address of the server is obtained from `gmailer-addr' which
+should be the full http bind address including port.
+E.g. https://localhost:1234."
+  (let* ((errbuf (if mail-interactive
+		    (generate-new-buffer " smtpmail errors")
+		  0))
+        (callback (lambda (status url)
+                    (message (format " %s" url))
+                    (message (buffer-string))))
+        (gmailer-url (format "%s/sendmail?user=%s" org-gmailer-addr user-mail-address))
+	(tembuf (generate-new-buffer " smtpmail temp"))
+	(case-fold-search nil)
+	delimline
+	result
+	(mailbuf (current-buffer))
+        ;; Examine this variable now, so that
+	;; local binding in the mail buffer will take effect.
+	(smtpmail-mail-address
+         (or (and mail-specify-envelope-from (mail-envelope-from))
+             (let ((from (mail-fetch-field "from")))
+	       (and from
+		    (cadr (mail-extract-address-components from))))
+	     (smtpmail-user-mail-address)))
+	(smtpmail-code-conv-from
+	 (if enable-multibyte-characters
+	     (let ((sendmail-coding-system smtpmail-code-conv-from))
+	       (select-message-coding-system)))))
+    (unwind-protect
+	(with-current-buffer tembuf
+	  (erase-buffer)
+	  ;; Use the same `buffer-file-coding-system' as in the mail
+	  ;; buffer, otherwise any `write-region' invocations (e.g., in
+	  ;; mail-do-fcc below) will annoy with asking for a suitable
+	  ;; encoding.
+	  (set-buffer-file-coding-system smtpmail-code-conv-from nil t)
+	  (insert-buffer-substring mailbuf)
+	  (goto-char (point-max))
+	  ;; require one newline at the end.
+	  (or (= (preceding-char) ?\n)
+	      (insert ?\n))
+	  ;; Change header-delimiter to be what sendmail expects.
+	  (mail-sendmail-undelimit-header)
+	  (setq delimline (point-marker))
+          ;; (sendmail-synch-aliases)
+	  (if mail-aliases
+	      (expand-mail-aliases (point-min) delimline))
+	  (goto-char (point-min))
+	  ;; ignore any blank lines in the header
+	  (while (and (re-search-forward "\n\n\n*" delimline t)
+		      (< (point) delimline))
+	    (replace-match "\n"))
+	  (let ((case-fold-search t))
+	    ;; We used to process Resent-... headers here,
+	    ;; but it was not done properly, and the job
+	    ;; is done correctly in `smtpmail-deduce-address-list'.
+	    ;; Don't send out a blank subject line
+	    (goto-char (point-min))
+	    (if (re-search-forward "^Subject:\\([ \t]*\n\\)+\\b" delimline t)
+		(replace-match "")
+	      ;; This one matches a Subject just before the header delimiter.
+	      (if (and (re-search-forward "^Subject:\\([ \t]*\n\\)+" delimline t)
+		       (= (match-end 0) delimline))
+		  (replace-match "")))
+	    ;; Put the "From:" field in unless for some odd reason
+	    ;; they put one in themselves.
+	    (goto-char (point-min))
+	    (if (not (re-search-forward "^From:" delimline t))
+		(let* ((login smtpmail-mail-address)
+		       (fullname (user-full-name)))
+		  (cond ((eq mail-from-style 'angles)
+			 (insert "From: " fullname)
+			 (let ((fullname-start (+ (point-min) 6))
+			       (fullname-end (point-marker)))
+			   (goto-char fullname-start)
+			   ;; Look for a character that cannot appear unquoted
+			   ;; according to RFC 822 or its successors.
+			   (if (re-search-forward "[^- !#-'*+/-9=?A-Z^-~]"
+						  fullname-end 1)
+			       (progn
+				 ;; Quote fullname, escaping specials.
+				 (goto-char fullname-start)
+				 (insert "\"")
+				 (while (re-search-forward "[\"\\]"
+							   fullname-end 1)
+				   (replace-match "\\\\\\&" t))
+				 (insert "\""))))
+			 (insert " <" login ">\n"))
+			((eq mail-from-style 'parens)
+			 (insert "From: " login " (")
+			 (let ((fullname-start (point)))
+			   (insert fullname)
+			   (let ((fullname-end (point-marker)))
+			     (goto-char fullname-start)
+			     ;; RFC 822 and its successors say \ and
+			     ;; nonmatching parentheses must be
+			     ;; escaped in comments.
+			     ;; Escape every instance of ()\ ...
+			     (while (re-search-forward "[()\\]" fullname-end 1)
+			       (replace-match "\\\\\\&" t))
+			     ;; ... then undo escaping of matching parentheses,
+			     ;; including matching nested parentheses.
+			     (goto-char fullname-start)
+			     (while (re-search-forward
+				     "\\(\\=\\|[^\\]\\(\\\\\\\\\\)*\\)\\\\(\\(\\([^\\]\\|\\\\\\\\\\)*\\)\\\\)"
+				     fullname-end 1)
+			       (replace-match "\\1(\\3)" t)
+			       (goto-char fullname-start))))
+			 (insert ")\n"))
+			((null mail-from-style)
+			 (insert "From: " login "\n")))))
+	    ;; Insert a `Message-Id:' field if there isn't one yet.
+	    (goto-char (point-min))
+	    (unless (re-search-forward "^Message-Id:" delimline t)
+	      (insert "Message-Id: " (message-make-message-id) "\n"))
+	    ;; Insert a `Date:' field if there isn't one yet.
+	    (goto-char (point-min))
+	    (unless (re-search-forward "^Date:" delimline t)
+	      (insert "Date: " (message-make-date) "\n"))
+	    ;; Possibly add a MIME header for the current coding system
+	    (let (charset)
+	      (goto-char (point-min))
+	      (and (eq mail-send-nonascii 'mime)
+		   (not (re-search-forward "^MIME-version:" delimline t))
+		   (progn (skip-chars-forward "\0-\177")
+			  (/= (point) (point-max)))
+		   smtpmail-code-conv-from
+		   (setq charset
+			 (coding-system-get smtpmail-code-conv-from
+					    'mime-charset))
+		   (goto-char delimline)
+		   (insert "MIME-version: 1.0\n"
+			   "Content-type: text/plain; charset="
+			   (symbol-name charset)
+			   "\nContent-Transfer-Encoding: 8bit\n")))
+	    ;; Insert an extra newline if we need it to work around
+	    ;; Sun's bug that swallows newlines.
+	    (goto-char (1+ delimline))
+	    (if (eval mail-mailer-swallows-blank-line)
+		(newline))
+	    ;; Find and handle any Fcc fields.
+	    (goto-char (point-min))
+	    (if (re-search-forward "^Fcc:" delimline t)
+		;; Force `mail-do-fcc' to use the encoding of the mail
+		;; buffer to encode outgoing messages on Fcc files.
+		(let ((coding-system-for-write
+		       ;; mbox files must have Unix EOLs.
+		       (coding-system-change-eol-conversion
+			smtpmail-code-conv-from 'unix)))
+		  (mail-do-fcc delimline)))
+	    (if mail-interactive
+		(with-current-buffer errbuf
+		  (erase-buffer))))
+	  ;; Encode the header according to RFC2047.
+	  (mail-encode-header (point-min) delimline)
+	  ;;
+	  (setq smtpmail-address-buffer (generate-new-buffer "*smtp-mail*"))
+	  (setq smtpmail-recipient-address-list
+                (smtpmail-deduce-address-list tembuf (point-min) delimline))
+	  (kill-buffer smtpmail-address-buffer)
+
+	  (smtpmail-do-bcc delimline)
+          ;; NOTE: This is where we differ from `smtpmail-send-it'. Instead of
+          ;;       sending via an smtp server we use the gmailer service running
+          ;;       at gmailer-url.
+          (let ((filename (make-temp-name ".tmpmail-")))
+            (write-file (expand-file-name (concat "~/" filename)))
+            (with-current-buffer (url-retrieve-synchronously (format "%s&filename=%s" gmailer-url filename))
+              (let ((case-fold-search t))
+                (goto-char (point-min))
+                (re-search-forward "\r?\n\r?\n")
+                (cond ((looking-at "error")
+                       (error "Sending mail failed: %s"
+                              (buffer-substring-no-properties (point) (point-max))))
+                      ((looking-at "success")
+                       (message "Sending mail sucessful: %s"
+                                (buffer-substring-no-properties (point) (point-max))))
+                      (t (error "Some weird error occurred while sending mail")))))
+            (delete-file (expand-file-name (concat "~/" filename)))
+            (when (get-buffer filename)
+              (kill-buffer filename)))))))
+
 (provide 'org-mailer)
 
 ;;; org-mailer.el ends here
-

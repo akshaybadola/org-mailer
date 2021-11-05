@@ -1,7 +1,7 @@
 (source gnu)
 (source melpa)
 
-(package-file "org-mu4e.el")
+(package-file "org-mailer.el")
 
 (depends-on "dash")
 (depends-on "org")
