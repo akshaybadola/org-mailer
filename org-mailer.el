@@ -68,25 +68,32 @@ Must be defined and maintained by the user.  It should consist
 `local-file;remote-file' pairs of lines of texts with a `;'
 delimiter")
 
-(defvar org-mailer-mail-subtree-preprocess-hooks nil
-  "Preprocessing hooks to run after inserting contents of org subtree with `org-mailer-mail-subtree'.")
+(defvar org-mailer-mail-subtree-preprocess-hook nil
+  "Preprocessing functions for `org-mailer-mail-subtree'.
+The functions in this hook are executed just after inserting
+contents of org subtree.")
 
-(defvar org-mailer-mail-subtree-postprocess-hooks nil
-  "Postprocessing hooks to run after inserting contents of org subtree with `org-mailer-mail-subtree'.")
+(defvar org-mailer-mail-subtree-postprocess-hook nil
+  "Postprocessing functions for `org-mailer-mail-subtree'.
+The functions in this hook are executed just before the temp org
+buffer is converted to html.")
 
 (defvar org-mailer-buffer-name "*org-mailer-mail-subtree-buffer*"
   "Name of the temp buffer for editing the subtree")
 
-;; (setq org-mailer-mail-subtree-preprocess-hooks nil)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hooks
+(defvar org-mailer-after-send-hook '(org-mailer-cleanup)
+  "Hook to run after sending mail via `org-mailer'.")
+
+;; (setq org-mailer-mail-subtree-preprocess-hook nil)
+(add-to-list 'org-mailer-mail-subtree-preprocess-hook
              #'org-mailer-remove-useless-items-from-buffer)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hooks
+(add-to-list 'org-mailer-mail-subtree-preprocess-hook
              #'org-mailer-convert-pdf-links-to-gdrive)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hooks
+(add-to-list 'org-mailer-mail-subtree-preprocess-hook
              #'org-mailer-insert-urls-in-properties-to-body)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hooks
+(add-to-list 'org-mailer-mail-subtree-preprocess-hook
              #'org-mailer-convert-file-links-to-references)
-(add-to-list 'org-mailer-mail-subtree-postprocess-hooks
+(add-to-list 'org-mailer-mail-subtree-postprocess-hook
              #'util/org-remove-all-drawers)
 
 (defun org-mailer-load-links-cache ()
@@ -125,12 +132,9 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
 (defun org-mailer-convert-file-links-to-references ()
   (let* ((link-re util/org-fuzzy-or-custom-id-link-re)
          (links (with-current-buffer org-mailer-source-buffer
-                 (-uniq (save-restriction
-                          (util/org-get-text-links link-re t t)))))
-        (buf-string (save-restriction
-                      (org-narrow-to-subtree)
-                      (buffer-string)))
-        (level (org-current-level)))
+                  (-uniq (save-restriction
+                           (util/org-get-text-links link-re t t)))))
+         (level (org-current-level)))
     (setq links (mapcar (lambda (x)
                           (pcase-let* ((item (cadr x))
                                        (custid (string-match-p "^#" (cadr (split-string item "::"))))
@@ -248,13 +252,13 @@ replying/forwarding etc.  Derived from
 
 (defun org-mailer-htmlize-current-buffer ()
   "Export current buffer with `org-mime-htmlize'.
-Prior to export `org-mailer-mail-subtree-postprocess-hooks' is run
+Prior to export `org-mailer-mail-subtree-postprocess-hook' is run
 on the current buffer.
 
 With a single prefix arg `C-u' export to an existing
 `mu4e-compose' buffer with `org-mailer-mime-htmlize'."
   (org-mailer-load-links-cache)
-  (run-hooks 'org-mailer-mail-subtree-postprocess-hooks)
+  (run-hook-with-args 'org-mailer-mail-subtree-postprocess-hook)
   (let ((org-export-with-toc nil)
         (org-export-with-broken-links 'mark)
         (org-export-with-timestamps nil)
@@ -292,9 +296,9 @@ With a single prefix arg `C-u' export to an existing
 existing `mu4e-compose' buffer to insert the file.
 
 It runs two hooks:
-1. `org-mailer-mail-subtree-preprocess-hooks' just after inserting
+1. `org-mailer-mail-subtree-preprocess-hook' just after inserting
 the subtree in the temp buffer.
-2. `org-mailer-mail-subtree-postprocess-hooks' is run after the
+2. `org-mailer-mail-subtree-postprocess-hook' is run after the
 links cache is loaded and before it's exported to html."
   (interactive)
   (setq org-mailer-source-buffer (current-buffer))
@@ -309,11 +313,19 @@ links cache is loaded and before it's exported to html."
         (goto-char (point-min))
         (insert (concat buf-string "\n"))
         (org-mode)
-        (run-hooks 'org-mailer-mail-subtree-preprocess-hooks)
+        (run-hook-with-args 'org-mailer-mail-subtree-preprocess-hook)
         (org-show-all)
         (setq-local org-finish-function #'org-mailer-htmlize-current-buffer)
         (goto-char (point-min))
         (switch-to-buffer mu4e-export-buf)))))
+
+(defun org-mailer-cleanup (args)
+  "Delete temp file and kill buffer."
+  (let ((filename (plist-get args :filename)))
+    (when (f-exists? (concat "~/" filename))
+      (delete-file (expand-file-name (concat "~/" filename))))
+    (when (get-buffer filename)
+      (kill-buffer filename))))
 
 ;; TODO: How to make this async?
 ;; TODO: For some reason .tmpmail-* buffers are left hanging around
@@ -325,29 +337,29 @@ The address of the server is obtained from `gmailer-addr' which
 should be the full http bind address including port.
 E.g. https://localhost:1234."
   (let* ((errbuf (if mail-interactive
-		    (generate-new-buffer " smtpmail errors")
-		  0))
-        (callback (lambda (status url)
-                    (message (format " %s" url))
-                    (message (buffer-string))))
-        (gmailer-url (format "%s/sendmail?user=%s" org-gmailer-addr user-mail-address))
-	(tembuf (generate-new-buffer " smtpmail temp"))
-	(case-fold-search nil)
-	delimline
-	result
-	(mailbuf (current-buffer))
-        ;; Examine this variable now, so that
-	;; local binding in the mail buffer will take effect.
-	(smtpmail-mail-address
-         (or (and mail-specify-envelope-from (mail-envelope-from))
-             (let ((from (mail-fetch-field "from")))
-	       (and from
-		    (cadr (mail-extract-address-components from))))
-	     (smtpmail-user-mail-address)))
-	(smtpmail-code-conv-from
-	 (if enable-multibyte-characters
-	     (let ((sendmail-coding-system smtpmail-code-conv-from))
-	       (select-message-coding-system)))))
+		     (generate-new-buffer " smtpmail errors")
+		   0))
+         ;; Not sure why this callback with lambda is here
+         (callback (lambda (status url)
+                     (message (format " %s" url))
+                     (message (buffer-string))))
+         (gmailer-url (format "%s/sendmail?user=%s" org-gmailer-addr user-mail-address))
+	 (tembuf (generate-new-buffer " smtpmail temp"))
+	 (case-fold-search nil)
+	 delimline
+	 (mailbuf (current-buffer))
+         ;; Examine this variable now, so that
+	 ;; local binding in the mail buffer will take effect.
+	 (smtpmail-mail-address
+          (or (and mail-specify-envelope-from (mail-envelope-from))
+              (let ((from (mail-fetch-field "from")))
+	        (and from
+		     (cadr (mail-extract-address-components from))))
+	      (smtpmail-user-mail-address)))
+	 (smtpmail-code-conv-from
+	  (if enable-multibyte-characters
+	      (let ((sendmail-coding-system smtpmail-code-conv-from))
+	        (select-message-coding-system)))))
     (unwind-protect
 	(with-current-buffer tembuf
 	  (erase-buffer)
@@ -498,9 +510,7 @@ E.g. https://localhost:1234."
                        (message "Sending mail sucessful: %s"
                                 (buffer-substring-no-properties (point) (point-max))))
                       (t (error "Some weird error occurred while sending mail")))))
-            (delete-file (expand-file-name (concat "~/" filename)))
-            (when (get-buffer filename)
-              (kill-buffer filename)))))))
+            (run-hook-with-args 'org-mailer-after-send-hook `(:filename ,filename)))))))
 
 (provide 'org-mailer)
 
