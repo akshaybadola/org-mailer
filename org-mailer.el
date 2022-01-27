@@ -43,11 +43,12 @@
 
 ;;; Code:
 
+(require 'smtpmail)
 (require 'sendmail)
 (require 'dash)
 (require 'org)
 (require 'org-mime)
-(require 'util)
+(require 'util/org "util-org.el")
 
 (defconst org-mailer-version "0.2.0"
   "`org-mailer' version string.")
@@ -95,6 +96,16 @@ buffer is converted to html.")
              #'org-mailer-convert-file-links-to-references)
 (add-to-list 'org-mailer-mail-subtree-postprocess-hook
              #'util/org-remove-all-drawers)
+
+(defun org-mailer-install-py-deps ()
+  (let* ((packages (shell-command-to-string "pip freeze"))
+         (have-oauthclient (string-match-p "oauth2client" packages))
+         (have-googlepyclient (string-match-p "google-api-python-client" packages))
+         (have-flask (string-match-p "flask" (downcase packages))))
+    (unless (and have-oauthclient have-googlepyclient)
+      (message "Some missing dependencies for python package. Installing...")
+      (shell-command "pip install flask oauth2client google-api-python-client"
+                     "*org-mailer-install-py-deps*" "*org-mailer-install-py-deps*"))))
 
 (defun org-mailer-load-links-cache ()
   "Load the existing cache from disk if defined.
@@ -238,17 +249,21 @@ buffer.  This is inserted into another mail buffer for
 replying/forwarding etc.  Derived from
 `org-mime-org-buffer-htmlize'"
   (interactive)
-  (let* ((mail-buf (ido-completing-read "Compose Buffer: "
-                                        (mapcar
-                                         (lambda (x) (format "%s" x))
-                                         (-filter
-                                          (lambda (x) (with-current-buffer x
-                                                        (eq major-mode 'mu4e-compose-mode)))
-                                          (buffer-list))))))
-    (when mail-buf
-      (with-current-buffer mail-buf
-        (insert buf-string)
-        (org-mime-htmlize)))))
+  (let* ((bufs (-filter
+                (lambda (x) (with-current-buffer x
+                              (eq major-mode 'mu4e-compose-mode)))
+                (buffer-list)))
+         (mail-buf (if (= (length bufs) 1)
+                       (car bufs)
+                     (ido-completing-read "Choose Buffer: "
+                                          (mapcar
+                                           (lambda (x) (format "%s" x))
+                                           bufs)))))
+    (if mail-buf
+        (with-current-buffer mail-buf
+          (insert buf-string)
+          (org-mime-htmlize))
+      (org-mime-org-buffer-htmlize))))
 
 (defun org-mailer-htmlize-current-buffer ()
   "Export current buffer with `org-mime-htmlize'.
@@ -270,20 +285,20 @@ With a single prefix arg `C-u' export to an existing
         (org-export-with-properties nil)
         (buf-string (buffer-string)))
     (bury-buffer)
-    (if current-prefix-arg
-        (org-mailer-mime-htmlize buf-string)
-      (with-current-buffer org-mailer-buffer-name
-        (let ((org-mime-export-options
-               '(:section-numbers nil
-                                  :with-author nil
-                                  :with-toc nil
-                                  :with-broken-links 'mark
-                                  :with-latex nil
-                                  :with-todo-keywords nil
-                                  :with-clocks nil
-                                  :with-sub-superscript nil
-                                  :with-date nil
-                                  :with-properties nil)))
+    (with-current-buffer org-mailer-buffer-name
+      (let ((org-mime-export-options
+             '(:section-numbers nil
+                                :with-author nil
+                                :with-toc nil
+                                :with-broken-links 'mark
+                                :with-latex nil
+                                :with-todo-keywords nil
+                                :with-clocks nil
+                                :with-sub-superscript nil
+                                :with-date nil
+                                :with-properties nil)))
+        (if current-prefix-arg
+            (org-mailer-mime-htmlize buf-string)
           (org-mime-org-buffer-htmlize))))))
 
 ;; Another implementation with `org-mime' is given here, though not it's not
@@ -322,10 +337,15 @@ links cache is loaded and before it's exported to html."
 (defun org-mailer-cleanup (args)
   "Delete temp file and kill buffer."
   (let ((filename (plist-get args :filename)))
-    (when (f-exists? (concat "~/" filename))
-      (delete-file (expand-file-name (concat "~/" filename))))
+    (if (and (f-exists? (concat "~/" filename))
+               (f-file-p (concat "~/" filename)))
+        (delete-file (expand-file-name (concat "~/" filename)))
+      (user-error "%s couldn't be deleted" filename))
     (when (get-buffer filename)
       (kill-buffer filename))))
+
+;; NOTE: Defined in `smtpmail'
+(defvar smtpmail-address-buffer)
 
 ;; TODO: How to make this async?
 ;; TODO: For some reason .tmpmail-* buffers are left hanging around
