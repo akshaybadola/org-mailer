@@ -22,6 +22,21 @@ def encode(v):
 
 
 class Mailer:
+    """Send mail via Gmail running as a :class:`Flask` service.
+
+    A simple HTTP server that reads OAUTH credentials once and stores them
+    in memory, and can then send mails via multiple accounts as requested.
+
+    The mail must be properly encoded.
+
+    Args:
+        port: Port on which to bind the :class:`Flask` server
+        users: List of users
+        method: Method of reading the credentials
+                Can be one of `pass` or `plain`. Additional methods can be added easily.
+        credentials_file: File from which to read credentials.
+
+    """
     def __init__(self, port: int, users: List[str], method: str,
                  credentials_file: Optional[Path]):
         self.port = port
@@ -46,6 +61,7 @@ class Mailer:
 
     @property
     def method(self) -> str:
+        """Get current credentials method."""
         return self._method
 
     @method.setter
@@ -57,15 +73,16 @@ class Mailer:
 
     @property
     def read_creds(self) -> Callable:
+        """Read credentials"""
         return self.credentials_methods[self.method]
 
     def read_creds_pass(self, user: str):
-        """Read credentials from UNIX 'pass' command.
+        """Read credentials from UNIX :code:`pass` command.
 
         Args:
             user: The user for whom to read credentials
 
-        The credentials should be stored as 'mail/username' in the pass
+        The credentials should be stored as :code:`mail/username` in the pass
         database.
 
         """
@@ -83,8 +100,8 @@ class Mailer:
         Args:
             user: The user for whom to read credentials
 
-        Plain text JSON credentials should not be used except for debugging as
-        they are a security risk.
+        Plain text JSON credentials *SHOULD NOT BE USED* except for debugging as
+        it is a security risk.
 
         """
         try:
@@ -96,10 +113,18 @@ class Mailer:
             return None
 
     def send_message(self, user: str, message: str):
+        """Send mail via account of user
+
+        Args:
+            user: username  of gmail account
+            message: The mail message
+        """
         return self.service[user].users().\
             messages().send(userId="me", body={"raw": encode(message)}).execute()
 
     def run(self):
+        """Start the :class:`Flask` service
+        """
         @self.app.route("/sendmail", methods=["GET"])
         def __sendmail():
             try:
