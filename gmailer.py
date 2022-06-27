@@ -7,6 +7,7 @@ import argparse
 from subprocess import Popen, PIPE
 import base64
 import sys
+import multiprocessing as mp
 
 # import configargparse
 from flask import Flask, request
@@ -16,6 +17,15 @@ from google.oauth2.credentials import Credentials
 from googleapiclient import discovery
 
 from oi_wrapper import OfflineImapWrapper
+
+
+def run_oi(config_str, accounts, folders, logfile, quick):
+    oi = OfflineImapWrapper(config_str=config_str,
+                            accounts=accounts,
+                            folders=folders,
+                            logfile=logfile,
+                            quick=quick)
+    oi.run()
 
 
 def encode(v: str) -> str:
@@ -51,6 +61,7 @@ class Mailer:
     """
     def __init__(self, port: int, users: List[str], method: str,
                  credentials_file: Optional[Path]):
+        mp.set_start_method("spawn")
         self.port = port
         self.service = {}
         self.creds = {}
@@ -190,12 +201,15 @@ class Mailer:
             folders = request.args.get("folders")
             quick = request.args.get("quick")
             logfile = request.args.get("logfile")
-            oi = OfflineImapWrapper(config_str=self.offlineimaprc,
-                                    accounts=accounts,
-                                    folders=folders,
-                                    quick=quick,
-                                    logfile=logfile)
-            oi.run()
+            oi = mp.Process(target=run_oi,
+                            kwargs={"config_str": self.offlineimaprc,
+                                    "accounts": accounts,
+                                    "folders": folders,
+                                    "quick": quick,
+                                    "logfile": logfile})
+            oi.start()
+            return (f"Fetching for accounts: {accounts} and folders: {folders}\n" +
+                    f"Options: quick {quick}, logfile {logfile}")
         serving.run_simple("localhost", self.port, self.app, threaded=True)
 
 

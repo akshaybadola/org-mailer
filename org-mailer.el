@@ -63,6 +63,11 @@
   :type 'string
   :group 'org-gmailer)
 
+(defcustom org-gmailer-logfile ""
+  "File for logging offlineimap output."
+  :type 'file
+  :group 'org-mailer)
+
 (defvar org-mailer-links-cache nil
   "A hash table mapping local files to a remote cache.
 Must be defined and maintained by the user.  It should consist
@@ -364,7 +369,7 @@ E.g. https://localhost:1234."
                      (message (format " %s" url))
                      (message (buffer-string))))
          (gmailer-url (format "%s/sendmail?user=%s" org-gmailer-addr user-mail-address))
-	 (tembuf (generate-new-buffer " smtpmail temp"))
+	 (temp-buf (generate-new-buffer " smtpmail temp"))
 	 (case-fold-search nil)
 	 delimline
 	 (mailbuf (current-buffer))
@@ -381,7 +386,7 @@ E.g. https://localhost:1234."
 	      (let ((sendmail-coding-system smtpmail-code-conv-from))
 	        (select-message-coding-system)))))
     (unwind-protect
-	(with-current-buffer tembuf
+	(with-current-buffer temp-buf
 	  (erase-buffer)
 	  ;; Use the same `buffer-file-coding-system' as in the mail
 	  ;; buffer, otherwise any `write-region' invocations (e.g., in
@@ -510,7 +515,7 @@ E.g. https://localhost:1234."
 	  ;;
 	  (setq smtpmail-address-buffer (generate-new-buffer "*smtp-mail*"))
 	  (setq smtpmail-recipient-address-list
-                (smtpmail-deduce-address-list tembuf (point-min) delimline))
+                (smtpmail-deduce-address-list temp-buf (point-min) delimline))
 	  (kill-buffer smtpmail-address-buffer)
 
 	  (smtpmail-do-bcc delimline)
