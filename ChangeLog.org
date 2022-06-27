@@ -1,0 +1,15 @@
+* Change Log for ~org-gmailer~
+
+** [2021-09-13 Mon 09:57]
+   - Added version string
+   - Added Changelog
+   - Added function `org-mu4e-convert-file-links-to-references`
+   - Added `org-mu4e-dired-add-marked-files-as-attachment`
+
+** [2021-10-09 Sat 19:29]
+   - A fresh repo init
+
+** [2022-06-28 Tue 03:35]
+   - Added offlineimap along with the wrapper.
+   - Removed dependency on deprecated ~oauth2client~.
+   - Added dependency for ~offlineimap~.

@@ -6,16 +6,28 @@ import shlex
 import argparse
 from subprocess import Popen, PIPE
 import base64
+import sys
 
 # import configargparse
 from flask import Flask, request
 from werkzeug import serving
 
-from oauth2client.client import OAuth2Credentials
+from google.oauth2.credentials import Credentials
 from googleapiclient import discovery
 
+from oi_wrapper import OfflineImapWrapper
 
-def encode(v):
+
+def encode(v: str) -> str:
+    """Encode string `v` to base64 string
+
+    Args:
+        v: String to be encoded
+
+    Encode first to bytes, then to base64, then decode again. Perhaps all this
+    is to remove artefacts. Not really sure but it works.
+
+    """
     byte_msg = v.encode(encoding="UTF-8")
     byte_msg_b64encoded = base64.b64encode(byte_msg)
     return byte_msg_b64encoded.decode(encoding="UTF-8")
@@ -57,6 +69,7 @@ class Mailer:
                 self.service[user] = discovery.build('gmail', 'v1', credentials=self.creds[user])
             else:
                 self.service[user] = None
+        self.offlineimaprc = self.read_offlineimap_config()
         self.app = Flask("gmail server")
 
     @property
@@ -76,7 +89,7 @@ class Mailer:
         """Read credentials"""
         return self.credentials_methods[self.method]
 
-    def read_creds_pass(self, user: str):
+    def read_creds_pass(self, user: str) -> Optional[Credentials]:
         """Read credentials from UNIX :code:`pass` command.
 
         Args:
@@ -89,12 +102,12 @@ class Mailer:
         try:
             p = Popen(shlex.split(f"pass mail/{user}"), stdout=PIPE)
             out, err = p.communicate()
-            return OAuth2Credentials.from_json(out)
+            return Credentials.from_authorized_user_info(json.loads(out))
         except Exception:
             print(f"Could not read credentials for user {user}")
             return None
 
-    def read_creds_plain(self, user: str):
+    def read_creds_plain(self, user: str) -> Optional[Credentials]:
         """Read credentials from plain text JSON.
 
         Args:
@@ -107,9 +120,23 @@ class Mailer:
         try:
             with open(self.credentials_file) as f:  # type: ignore
                 credentials = json.load(f)
-                return OAuth2Credentials.from_json(credentials[user])
+                return Credentials.from_authorized_user_info(credentials)
         except Exception:
             print(f"Could not read credentials for user {user}")
+            return None
+
+    def read_offlineimap_config(self) -> Optional[str]:
+        """Read offlineimap configuration from password store.
+
+        The path in the password store is assumed to be :code:`mail/offlineimaprc`
+
+        """
+        try:
+            p = Popen(shlex.split(f"pass mail/offlineimaprc"), stdout=PIPE)
+            out, err = p.communicate()
+            return out.decode()
+        except Exception:
+            print(f"Could not read offlineimap config")
             return None
 
     def send_message(self, user: str, message: str):
@@ -120,13 +147,22 @@ class Mailer:
             message: The mail message
         """
         return self.service[user].users().\
-            messages().send(userId="me", body={"raw": encode(message)}).execute()
+            messages().\
+            send(userId="me", body={"raw": encode(message)}).\
+            execute()
 
     def run(self):
         """Start the :class:`Flask` service
         """
         @self.app.route("/sendmail", methods=["GET"])
         def __sendmail():
+            """Send mail via Google's api
+
+            Args:
+                user: User name or account
+                filename: Mail file
+
+            """
             try:
                 user = request.args.get("user")
                 filename = request.args.get("filename")
@@ -139,6 +175,27 @@ class Mailer:
             else:
                 return "Success. " + json.dumps(self.send_message(user, msg))
 
+        @self.app.route("/fetch_mail", methods=["GET"])
+        def __offllineimap():
+            """Fetch mail via offlineimap
+
+            Args:
+                accounts: comma separated list of accounts
+                folders: comma separated list of folders to sync
+                quick: quick flag to OfflineImap
+                logfile: specify logfile for OfflineImap
+
+            """
+            accounts = request.args.get("accounts")
+            folders = request.args.get("folders")
+            quick = request.args.get("quick")
+            logfile = request.args.get("logfile")
+            oi = OfflineImapWrapper(config_str=self.offlineimaprc,
+                                    accounts=accounts,
+                                    folders=folders,
+                                    quick=quick,
+                                    logfile=logfile)
+            oi.run()
         serving.run_simple("localhost", self.port, self.app, threaded=True)
 
 
@@ -154,6 +211,7 @@ if __name__ == '__main__':
     parser.add_argument("--credentials-file", default="",
                         help="Plain text credentials file. NOT RECOMMENDED. Can be used for debugging.")
     args = parser.parse_args()
+    sys.argv = sys.argv[:1]  # reset args to avoid confusing OI and keep changes to a minimum
     port = args.port
     users = [x.strip() for x in args.users.split(",")]
     mailer = Mailer(port, users, args.method, Path(args.credentials_file))
