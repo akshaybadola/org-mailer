@@ -2,29 +2,35 @@ from typing import List, Callable, Dict, Optional
 import os
 import json
 from pathlib import Path
+import time
 import shlex
 import argparse
 from subprocess import Popen, PIPE
 import base64
 import sys
 import multiprocessing as mp
+from threading import Thread
+from functools import partial
+
 
 # import configargparse
 from flask import Flask, request
 from werkzeug import serving
 
+# NOTE: I've incorporated only gmail but any other mail service
+#       that supports IMAP and a send function via POP or RPC
+#       mechanism should work fine
 from google.oauth2.credentials import Credentials
 from googleapiclient import discovery
+
+import schedule
 
 from oi_wrapper import OfflineImapWrapper
 
 
-def run_oi(config_str, accounts, folders, logfile, quick):
-    oi = OfflineImapWrapper(config_str=config_str,
-                            accounts=accounts,
-                            folders=folders,
-                            logfile=logfile,
-                            quick=quick)
+def run_oi(config_str, **kwargs):
+    print("Fetching mail")
+    oi = OfflineImapWrapper(config_str=config_str, **kwargs)
     oi.run()
 
 
@@ -56,10 +62,13 @@ class Mailer:
         users: List of users
         method: Method of reading the credentials
                 Can be one of `pass` or `plain`. Additional methods can be added easily.
+        schedule_mail: Whether to schedule fetching of mail at regular intervals
+        schedule_times: If mail is scheduled then at what times should we do it.
         credentials_file: File from which to read credentials.
 
     """
     def __init__(self, port: int, users: List[str], method: str,
+                 schedule_mail: bool, schedule_times: dict,
                  credentials_file: Optional[Path]):
         mp.set_start_method("spawn")
         self.port = port
@@ -82,6 +91,45 @@ class Mailer:
                 self.service[user] = None
         self.offlineimaprc = self.read_offlineimap_config()
         self.app = Flask("gmail server")
+        if schedule_mail:
+            self.schedule_times = schedule_times
+            self.schedule_fetch_mail()
+
+    def fetch_mail(self, quick=False, **kwargs):
+        """Fetch mail according to given configuration
+
+        Args:
+            quick: Use \"quick\" option of offlineimap
+
+        The users and other other options are specified via kwargs
+
+        """
+        kwargs = {"config_str": self.offlineimaprc,
+                  "quick": quick}
+        oi = mp.Process(target=run_oi, kwargs=kwargs)
+        oi.start()
+
+    def schedule_fetch_mail(self):
+        """Schedule periodic fetching of user mail
+
+        We fetch once every day with full flags and \"quick\" every 15 minutes.
+
+        """
+        def schedule_run_forever():
+            while True:
+                schedule.run_pending()
+                time.sleep(60)
+
+        t_time = self.schedule_times["daily"]
+        t_mins = self.schedule_times["mins"]
+        fetch_mail_quick = partial(self.fetch_mail, True)
+        schedule.every().day.at(t_time).do(self.fetch_mail)
+        schedule.every(t_mins).minutes.do(fetch_mail_quick)
+        self.schedule_thread = Thread(target=schedule_run_forever)
+        self.schedule_thread.start()
+        print("Scheduled mail fetching service\n" +
+              f"Every day at {t_time}\n" +
+              f"Every hour at {t_mins} minutes")
 
     @property
     def method(self) -> str:
@@ -197,19 +245,20 @@ class Mailer:
                 logfile: specify logfile for OfflineImap
 
             """
-            accounts = request.args.get("accounts")
-            folders = request.args.get("folders")
-            quick = request.args.get("quick")
-            logfile = request.args.get("logfile")
-            oi = mp.Process(target=run_oi,
-                            kwargs={"config_str": self.offlineimaprc,
-                                    "accounts": accounts,
-                                    "folders": folders,
-                                    "quick": quick,
-                                    "logfile": logfile})
+            kwargs = {"config_str": self.offlineimaprc}
+            for x in ["accounts", "folders", "quick"]:
+                if request.args.get(x):
+                    kwargs[x] = request.args.get(x)
+            default_logfile = Path.home().joinpath("logs", "offlineimap.log")
+            if default_logfile.exists():
+                kwargs["logfile"] = str(request.args.get("logfile") or default_logfile)
+            oi = mp.Process(target=run_oi, kwargs=kwargs)
             oi.start()
+            accounts = kwargs.get("accounts", "all")
+            folders = kwargs.get("folders", "all")
+            quick = kwargs.get("quick", False)
             return (f"Fetching for accounts: {accounts} and folders: {folders}\n" +
-                    f"Options: quick {quick}, logfile {logfile}")
+                    f"Options: quick {quick}, logfile {kwargs.get('logfile', None)}")
         serving.run_simple("localhost", self.port, self.app, threaded=True)
 
 
@@ -224,9 +273,17 @@ if __name__ == '__main__':
                         help="Method for reading credentials. Defaults to 'pass'")
     parser.add_argument("--credentials-file", default="",
                         help="Plain text credentials file. NOT RECOMMENDED. Can be used for debugging.")
+    parser.add_argument("--schedule", action="store_true",
+                        help="Use scheduler for fetching of user mail.")
+    parser.add_argument("--schedule-daily", default="05:00",
+                        help="Schedule fetching all mail at a specified time every day.")
+    parser.add_argument("--schedule-mins", default=15, type=int,
+                        help="Schedule fetching mail with \"quick\" flag in every \"x\" minutes.")
     args = parser.parse_args()
     sys.argv = sys.argv[:1]  # reset args to avoid confusing OI and keep changes to a minimum
     port = args.port
     users = [x.strip() for x in args.users.split(",")]
-    mailer = Mailer(port, users, args.method, Path(args.credentials_file))
+    mailer = Mailer(port, users, args.method, args.schedule,
+                    {"daily": args.schedule_daily, "mins": args.schedule_mins},
+                    Path(args.credentials_file))
     mailer.run()

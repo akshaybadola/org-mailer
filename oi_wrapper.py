@@ -139,15 +139,15 @@ class OfflineImapWrapper(offlineimap.OfflineImap):
             configfilename = os.path.expanduser(options.configfile)
 
         config = CustomConfigParser()
-        if not os.path.exists(configfilename):
-            # TODO, initialize and make use of chosen ui for logging
-            logging.error(" *** Config file '%s' does not exist; aborting!" %
-                          configfilename)
-            sys.exit(1)
-
+        # NOTE: Read config string if exists
         if self.__config_str:
             config.read_string(self.__config_str)
         else:
+            if not os.path.exists(configfilename):
+                # TODO, initialize and make use of chosen ui for logging
+                logging.error(" *** Config file '%s' does not exist; aborting!" %
+                              configfilename)
+                sys.exit(1)
             config.read(configfilename)
         options.accounts = self.__accounts
         options.folders = self.__folders

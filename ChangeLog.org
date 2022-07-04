@@ -13,3 +13,10 @@
    - Added offlineimap along with the wrapper.
    - Removed dependency on deprecated ~oauth2client~.
    - Added dependency for ~offlineimap~.
+
+** [2022-07-04 Mon 19:09]
+   - Added ~schedule~
+   - As I seek to move away from unencrypted config file, regular mail fetching
+     is now incorporated in ~mailer.py~ (renamed from ~gmailer.py~). The
+     functionality seems to work fine.
+   - Next would be to decouple this from the emacs package.
