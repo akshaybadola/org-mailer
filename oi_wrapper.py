@@ -18,6 +18,17 @@ ACCOUNT_LIMITED_THREAD_NAME = 'MAX_ACCOUNTS'
 class OfflineImapWrapper(offlineimap.OfflineImap):
     def __init__(self, config_str="", accounts=None, folders=None,
                  quick=False, logfile=None):
+        """Wrapper for :class:`OfflineImap`
+
+        Args:
+            config_str: Contents of would be :code:`offlineimaprc` file
+            accounts: List of accounts. If not given, all accounts are synced
+            folders: Folders to sync. If not given, all folders are synced.
+            quick: Whether to use :code:`quick` flag of :class:`OfflineImap`
+            logfile: Optional log file.
+
+
+        """
         super().__init__()
         self.__config_str = config_str
         self.__accounts = accounts

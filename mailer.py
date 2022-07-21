@@ -1,6 +1,7 @@
 from typing import List, Callable, Dict, Optional
 import os
 import json
+import datetime
 from pathlib import Path
 import time
 import shlex
@@ -12,8 +13,6 @@ import multiprocessing as mp
 from threading import Thread
 from functools import partial
 
-
-# import configargparse
 from flask import Flask, request
 from werkzeug import serving
 
@@ -27,9 +26,23 @@ import schedule
 
 from oi_wrapper import OfflineImapWrapper
 
+__version__ = "0.1.0"
+
 
 def run_oi(config_str, **kwargs):
-    print("Fetching mail")
+    """Run the OfflineIMAP.
+
+    Args:
+        config_str: configuration string as it would be in `.offlineimaprc` or
+                    the offlineimap configuration
+        kwargs: Keyword arguments to the :class:`OfflineImapWrapper`
+
+    The wrapper :class:`OfflineImapWrapper` overrides :class:`OfflineImap`
+    to incorporate running without a config file present.
+
+
+    """
+    print(f"Fetching mail at {datetime.datetime.now().ctime()}")
     oi = OfflineImapWrapper(config_str=config_str, **kwargs)
     oi.run()
 
@@ -90,6 +103,7 @@ class Mailer:
             else:
                 self.service[user] = None
         self.offlineimaprc = self.read_offlineimap_config()
+        self.oi_default_logfile = Path.home().joinpath("logs", "offlineimap.log")
         self.app = Flask("gmail server")
         if schedule_mail:
             self.schedule_times = schedule_times
@@ -106,13 +120,18 @@ class Mailer:
         """
         kwargs = {"config_str": self.offlineimaprc,
                   "quick": quick}
+        default_logfile = self.oi_default_logfile
+        if default_logfile.exists():
+            kwargs["logfile"] = str(default_logfile)
         oi = mp.Process(target=run_oi, kwargs=kwargs)
         oi.start()
 
     def schedule_fetch_mail(self):
         """Schedule periodic fetching of user mail
 
-        We fetch once every day with full flags and \"quick\" every 15 minutes.
+        We fetch once every day with full flags and \"quick\" every 15 minutes
+        by default. The schedule can be configured via command line args
+        \"--schedule-daily\" and \"--schedule-quick\".
 
         """
         def schedule_run_forever():
@@ -128,8 +147,8 @@ class Mailer:
         self.schedule_thread = Thread(target=schedule_run_forever)
         self.schedule_thread.start()
         print("Scheduled mail fetching service\n" +
-              f"Every day at {t_time}\n" +
-              f"Every hour at {t_mins} minutes")
+              f"Full at every day at {t_time}\n" +
+              f"Quick at every {t_mins} minutes")
 
     @property
     def method(self) -> str:
@@ -213,6 +232,10 @@ class Mailer:
     def run(self):
         """Start the :class:`Flask` service
         """
+        @self.app.route("/version", methods=["GET"])
+        def __version():
+            return __version__
+
         @self.app.route("/sendmail", methods=["GET"])
         def __sendmail():
             """Send mail via Google's api
@@ -249,7 +272,7 @@ class Mailer:
             for x in ["accounts", "folders", "quick"]:
                 if request.args.get(x):
                     kwargs[x] = request.args.get(x)
-            default_logfile = Path.home().joinpath("logs", "offlineimap.log")
+            default_logfile = self.oi_default_logfile
             if default_logfile.exists():
                 kwargs["logfile"] = str(request.args.get("logfile") or default_logfile)
             oi = mp.Process(target=run_oi, kwargs=kwargs)
