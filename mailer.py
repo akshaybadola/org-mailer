@@ -42,7 +42,7 @@ def run_oi(config_str, **kwargs):
 
 
     """
-    print(f"Fetching mail at {datetime.datetime.now().ctime()}")
+    print(f"\nFetching mail at {datetime.datetime.now().ctime()}")
     oi = OfflineImapWrapper(config_str=config_str, **kwargs)
     oi.run()
 
