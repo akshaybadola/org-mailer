@@ -58,12 +58,12 @@
   :type 'file
   :group 'org-mailer)
 
-(defcustom org-gmailer-addr ""
+(defcustom org-mailer-addr ""
   "Address for the http gmail service."
   :type 'string
   :group 'org-gmailer)
 
-(defcustom org-gmailer-logfile ""
+(defcustom org-mailer-logfile ""
   "File for logging offlineimap output."
   :type 'file
   :group 'org-mailer)
@@ -368,7 +368,7 @@ E.g. https://localhost:1234."
          (callback (lambda (status url)
                      (message (format " %s" url))
                      (message (buffer-string))))
-         (gmailer-url (format "%s/sendmail?user=%s" org-gmailer-addr user-mail-address))
+         (mailer-url (format "%s/sendmail?user=%s" org-mailer-addr user-mail-address))
 	 (temp-buf (generate-new-buffer " smtpmail temp"))
 	 (case-fold-search nil)
 	 delimline
@@ -524,7 +524,7 @@ E.g. https://localhost:1234."
           ;;       at gmailer-url.
           (let ((filename (make-temp-name ".tmpmail-")))
             (write-file (expand-file-name (concat "~/" filename)))
-            (with-current-buffer (url-retrieve-synchronously (format "%s&filename=%s" gmailer-url filename))
+            (with-current-buffer (url-retrieve-synchronously (format "%s&filename=%s" mailer-url filename))
               (let ((case-fold-search t))
                 (goto-char (point-min))
                 (re-search-forward "\r?\n\r?\n")
