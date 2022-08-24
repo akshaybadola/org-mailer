@@ -495,8 +495,13 @@ E.g. https://localhost:1234."
 	    ;; Insert an extra newline if we need it to work around
 	    ;; Sun's bug that swallows newlines.
 	    (goto-char (1+ delimline))
-	    (if (eval mail-mailer-swallows-blank-line)
-		(newline))
+            (cond ((boundp 'mail-mailer-swallows-blank-line)
+                   (if (eval mail-mailer-swallows-blank-line)
+		       (newline)))
+                  ((boundp 'message-mailer-swallows-blank-line)
+                   (if (eval message-mailer-swallows-blank-line)
+		       (newline)))
+                  (t (error "Not sure how we got here")))
 	    ;; Find and handle any Fcc fields.
 	    (goto-char (point-min))
 	    (if (re-search-forward "^Fcc:" delimline t)
