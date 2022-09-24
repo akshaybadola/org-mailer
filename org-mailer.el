@@ -1,13 +1,13 @@
 ;;; org-mailer.el --- Functions to integrate `org-mode' and `mu4e' ;;; -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2019,2020,2021
+;; Copyright (C) 2019,2020,2021,2022
 ;; Akshay Badola
 
 ;; Author:	Akshay Badola <akshay.badola.cs@gmail.com>
 ;; Maintainer:	Akshay Badola <akshay.badola.cs@gmail.com>
-;; Time-stamp:	<Saturday 09 October 2021 19:54:20 PM IST>
+;; Time-stamp:	<Saturday 24 September 2022 18:56:31 PM IST>
 ;; Keywords:	org, mu4e, mail, org-mime
-;; Version:     0.2.0
+;; Version:     0.2.1
 
 ;; This file is *NOT* part of GNU Emacs.
 
@@ -84,7 +84,7 @@ contents of org subtree.")
 The functions in this hook are executed just before the temp org
 buffer is converted to html.")
 
-(defvar org-mailer-buffer-name "*org-mailer-mail-subtree-buffer*"
+(defvar org-mailer-buffer-name "*org-mailer-org-buffer*"
   "Name of the temp buffer for editing the subtree")
 
 (defvar org-mailer-after-send-hook '(org-mailer-cleanup)
@@ -146,6 +146,7 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
 
 (defvar org-mailer-source-buffer nil)
 (defun org-mailer-convert-file-links-to-references ()
+  "Convert org file links to internal links."
   (let* ((link-re util/org-fuzzy-or-custom-id-link-re)
          (links (with-current-buffer org-mailer-source-buffer
                   (-uniq (save-restriction
@@ -160,14 +161,16 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
                             (with-current-buffer buf
                               (save-excursion
                                 (save-restriction
-                                  (if custid
-                                      (util/org-get-subtree-with-body-for-custom-id re)
-                                    (util/org-get-subtree-with-body-for-heading-matching-re re)))))))
+                                  (let ((subtree
+                                         (if custid
+                                             (util/org-get-subtree-with-body-for-custom-id re)
+                                           (util/org-get-subtree-with-body-for-heading-matching-re re))))
+                                    (if (string-match-p "[a-zA-Z]+[0-9]\\{4\\}.+" re)
+                                        subtree
+                                      (warn "Link %s is not a publication. Not inserting references." re) nil)))))))
                         links))
     (org-end-of-subtree t)
-    (seq-do (lambda (x)
-              (org-paste-subtree (+ 1 level) x))
-            links)))
+    (seq-do (lambda (x) (org-paste-subtree (+ 1 level) x)) (-filter 'identity links))))
 
 (defun org-mailer-replace-pdf-link-with-gdrive (cache)
   "Replace pdf file URIs for current heading with gdrive links.
@@ -309,8 +312,8 @@ With a single prefix arg `C-u' export to an existing
 ;; Another implementation with `org-mime' is given here, though not it's not
 ;; necessarily for mailing a subtree
 ;; https://kitchingroup.cheme.cmu.edu/blog/category/email/
-(defun org-mailer-mail-subtree ()
-  "Export org subtree with `org-mime'.
+(defun org-mailer-compose ()
+  "Export active region or org subtree with `org-mime'.
 `\\[universal-argument]' is processed by
 `org-mailer-htmlize-current-buffer' and if non-nil then ask for an
 existing `mu4e-compose' buffer to insert the file.
@@ -325,8 +328,12 @@ links cache is loaded and before it's exported to html."
   (unless org-mailer-links-cache
     (message "[org-mailer] %s is nil, proceeding without cache" org-mailer-links-cache))
   (save-excursion
-    (let ((buf-string (save-restriction (org-narrow-to-subtree)
-                                        (buffer-string)))
+    (let ((buf-string
+           (save-restriction
+             (if (region-active-p)
+                 (narrow-to-region (region-beginning) (region-end))
+               (org-narrow-to-subtree))
+             (buffer-string)))
           (mu4e-export-buf (get-buffer-create org-mailer-buffer-name))
           (org-export-with-toc nil))
       (with-current-buffer mu4e-export-buf

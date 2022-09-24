@@ -20,3 +20,9 @@
      is now incorporated in ~mailer.py~ (renamed from ~gmailer.py~). The
      functionality seems to work fine.
    - Next would be to decouple this from the emacs package.
+
+** [2022-09-24 Sat 18:43]
+   - Changed behaviour of conversion of internal links so that it should only
+     get paper links in ~org-mailer-convert-file-links-to-references~
+   - Changed name of ~org-mailer-mail-subtree~ to ~org-mailer-compose~
+   - ~org-mailer-compose~ will also mail region if active
