@@ -5,9 +5,9 @@
 
 ;; Author:	Akshay Badola <akshay.badola.cs@gmail.com>
 ;; Maintainer:	Akshay Badola <akshay.badola.cs@gmail.com>
-;; Time-stamp:	<Saturday 24 September 2022 18:56:31 PM IST>
+;; Time-stamp:	<Thursday 17 November 2022 09:03:18 AM IST>
 ;; Keywords:	org, mu4e, mail, org-mime
-;; Version:     0.2.1
+;; Version:     0.2.2
 
 ;; This file is *NOT* part of GNU Emacs.
 
@@ -104,11 +104,16 @@ buffer is converted to html.")
 
 (defun org-mailer-install-py-deps ()
   (let* ((packages (shell-command-to-string "pip freeze"))
-         (have-oauthclient (string-match-p "oauth2client" packages))
-         (have-googlepyclient (string-match-p "google-api-python-client" packages))
-         (have-flask (string-match-p "flask" (downcase packages))))
-    (unless (and have-oauthclient have-googlepyclient)
-      (message "Some missing dependencies for python package. Installing...")
+         (reqs-file-text (with-current-buffer
+                           (find-file-noselect "requirements.txt")
+                         (prog1 (buffer-string)
+                           (kill-buffer))))
+         (reqs (-keep (lambda (x) (let ((pkg (car (split-string x "<\\|>\\|="))))
+                                    (and (not (string-empty-p pkg)) pkg)))
+                      (split-string reqs-file-text "\n")))
+         (not-present (-filter (lambda (x) (not (string-match-p x packages))) reqs)))
+    (when not-present
+      (message "Dependencies \"%s\" are missing. Installing..." (string-join not-present ", "))
       (shell-command "pip install flask oauth2client google-api-python-client"
                      "*org-mailer-install-py-deps*" "*org-mailer-install-py-deps*"))))
 
@@ -326,7 +331,7 @@ links cache is loaded and before it's exported to html."
   (interactive)
   (setq org-mailer-source-buffer (current-buffer))
   (unless org-mailer-links-cache
-    (message "[org-mailer] %s is nil, proceeding without cache" org-mailer-links-cache))
+    (message "[org-mailer] Links cache is nil, proceeding without cache"))
   (save-excursion
     (let ((buf-string
            (save-restriction
@@ -360,7 +365,7 @@ links cache is loaded and before it's exported to html."
 (defvar smtpmail-address-buffer)
 
 ;; TODO: How to make this async?
-;; TODO: For some reason .tmpmail-* buffers are left hanging around
+;; TODO: .tmpmail-* buffers are left hanging around when the mu process crashes
 (defun org-mailer-send-via-gmailer ()
   "Send mail via gmailer.
 Mostly adapted from `smtpmail-send-it'.
@@ -546,8 +551,9 @@ E.g. https://localhost:1234."
                       ((looking-at "success")
                        (message "Sending mail sucessful: %s"
                                 (buffer-substring-no-properties (point) (point-max))))
-                      (t (error "Some weird error occurred while sending mail")))))
-            (run-hook-with-args 'org-mailer-after-send-hook `(:filename ,filename)))))))
+                      (t (error "Some weird error occurred while sending mail")))))))
+      ;; Call hook even if error occurs
+      (run-hook-with-args 'org-mailer-after-send-hook `(:filename ,filename)))))
 
 (provide 'org-mailer)
 

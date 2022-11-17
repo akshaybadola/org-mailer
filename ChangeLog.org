@@ -26,3 +26,8 @@
      get paper links in ~org-mailer-convert-file-links-to-references~
    - Changed name of ~org-mailer-mail-subtree~ to ~org-mailer-compose~
    - ~org-mailer-compose~ will also mail region if active
+
+** [2022-11-17 Thu 09:02]
+   - Added reading plaintext offlineimap config file for mailer
+   - Changes to ~org-mailer-install-py-deps~ and a possible fix to ~tmp-*~ files
+     remaining after sending mail

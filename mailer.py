@@ -90,6 +90,9 @@ class Mailer:
         self.users = users
         self.credentials_methods: Dict[str, Callable] = {"pass": self.read_creds_pass,
                                                          "plain": self.read_creds_plain}
+        self.offlineimap_config_methods: Dict[str, Callable] =\
+            {"pass": self.read_offlineimap_config_pass,
+             "plain": self.read_offlineimap_config_plain}
         self.method = method
         self.credentials_file = credentials_file
         print(f"Read credentials method is: {self.method}")
@@ -167,6 +170,11 @@ class Mailer:
         """Read credentials"""
         return self.credentials_methods[self.method]
 
+    @property
+    def read_offlineimap_config(self) -> Callable:
+        """Read offlineimap config"""
+        return self.offlineimap_config_methods[self.method]
+
     def read_creds_pass(self, user: str) -> Optional[Credentials]:
         """Read credentials from UNIX :code:`pass` command.
 
@@ -203,18 +211,41 @@ class Mailer:
             print(f"Could not read credentials for user {user}")
             return None
 
-    def read_offlineimap_config(self) -> Optional[str]:
+    def read_offlineimap_config_pass(self) -> Optional[str]:
         """Read offlineimap configuration from password store.
 
         The path in the password store is assumed to be :code:`mail/offlineimaprc`
 
         """
         try:
-            p = Popen(shlex.split(f"pass mail/offlineimaprc"), stdout=PIPE)
+            p = Popen(shlex.split("pass mail/offlineimaprc"), stdout=PIPE)
             out, err = p.communicate()
             return out.decode()
         except Exception:
-            print(f"Could not read offlineimap config")
+            print("Could not read offlineimap config")
+            return None
+
+    def read_offlineimap_config_plain(self) -> Optional[str]:
+        """Read offlineimap configuration from a PLAINTEXT file
+
+        The method looks first for :code:`~/.offlineimaprc` and then
+        :code:`~/.config/offlineimap/offlineimaprc`
+
+        Reading offlineimap config from a plaintext file carries the same
+        risks as reading google credentials from plaintext. This should
+        not be used in ordinary situations but offlineimap config is
+        commonly stored as plaintext for some reason.
+
+        """
+        try:
+            for config_file in ["~/.offlineimaprc", "~/.config/offlineimap/offlineimaprc"]:
+                if Path(config_file).exists():
+                    break
+            with open(config_file) as f:
+                offlineimap_config = f.read()
+            return offlineimap_config
+        except Exception:
+            print("Could not read offlineimap config")
             return None
 
     def send_message(self, user: str, message: str):
