@@ -37,7 +37,7 @@
 ;; There are also subroutines for including org links mentioned in text and
 ;; attaching files automatically via some cloud platform.
 ;;
-;; There's also a python script `gmailer.py' which allows you to mail the buffer
+;; There's also a python script `mailer.py' which allows you to mail the buffer
 ;; with gmail and XOAUTH2 with the credentials being fetched from `pass'
 ;; password store or plain text.
 
@@ -61,7 +61,7 @@
 (defcustom org-mailer-addr ""
   "Address for the http gmail service."
   :type 'string
-  :group 'org-gmailer)
+  :group 'org-mailer)
 
 (defcustom org-mailer-logfile ""
   "File for logging offlineimap output."
@@ -366,11 +366,11 @@ links cache is loaded and before it's exported to html."
 
 ;; TODO: How to make this async?
 ;; TODO: .tmpmail-* buffers are left hanging around when the mu process crashes
-(defun org-mailer-send-via-gmailer ()
-  "Send mail via gmailer.
+(defun org-mailer-send-via-mailer ()
+  "Send mail via mailer.
 Mostly adapted from `smtpmail-send-it'.
 
-The address of the server is obtained from `gmailer-addr' which
+The address of the server is obtained from `org-mailer-addr' which
 should be the full http bind address including port.
 E.g. https://localhost:1234."
   (let* ((errbuf (if mail-interactive
@@ -382,6 +382,7 @@ E.g. https://localhost:1234."
                      (message (buffer-string))))
          (mailer-url (format "%s/sendmail?user=%s" org-mailer-addr user-mail-address))
 	 (temp-buf (generate-new-buffer " smtpmail temp"))
+         (tmp-fname (make-temp-name ".tmpmail-"))
 	 (case-fold-search nil)
 	 delimline
 	 (mailbuf (current-buffer))
@@ -537,23 +538,22 @@ E.g. https://localhost:1234."
 
 	  (smtpmail-do-bcc delimline)
           ;; NOTE: This is where we differ from `smtpmail-send-it'. Instead of
-          ;;       sending via an smtp server we use the gmailer service running
-          ;;       at gmailer-url.
-          (let ((filename (make-temp-name ".tmpmail-")))
-            (write-file (expand-file-name (concat "~/" filename)))
-            (with-current-buffer (url-retrieve-synchronously (format "%s&filename=%s" mailer-url filename))
-              (let ((case-fold-search t))
-                (goto-char (point-min))
-                (re-search-forward "\r?\n\r?\n")
-                (cond ((looking-at "error")
-                       (error "Sending mail failed: %s"
+          ;;       sending via an smtp server we use the mailer service running
+          ;;       at mailer-url.
+          (write-file (expand-file-name (concat "~/" tmp-fname)))
+          (with-current-buffer (url-retrieve-synchronously (format "%s&filename=%s" mailer-url tmp-fname))
+            (let ((case-fold-search t))
+              (goto-char (point-min))
+              (re-search-forward "\r?\n\r?\n")
+              (cond ((looking-at "error")
+                     (error "Sending mail failed: %s"
+                            (buffer-substring-no-properties (point) (point-max))))
+                    ((looking-at "success")
+                     (message "Sending mail sucessful: %s"
                               (buffer-substring-no-properties (point) (point-max))))
-                      ((looking-at "success")
-                       (message "Sending mail sucessful: %s"
-                                (buffer-substring-no-properties (point) (point-max))))
-                      (t (error "Some weird error occurred while sending mail")))))))
+                    (t (error "Some weird error occurred while sending mail"))))))
       ;; Call hook even if error occurs
-      (run-hook-with-args 'org-mailer-after-send-hook `(:filename ,filename)))))
+      (run-hook-with-args 'org-mailer-after-send-hook `(:filename ,tmp-fname)))))
 
 (provide 'org-mailer)
 

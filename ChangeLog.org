@@ -31,3 +31,8 @@
    - Added reading plaintext offlineimap config file for mailer
    - Changes to ~org-mailer-install-py-deps~ and a possible fix to ~tmp-*~ files
      remaining after sending mail
+
+** [2022-12-13 Tue 17:29]
+   - Changed remaining ~gmailer~ references to ~mailer~
+   - Fixed bug where temp file name in ~org-mailer-send-via-mailer~ was out of
+     scope for the ~unwind-protect~
