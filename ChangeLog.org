@@ -36,3 +36,6 @@
    - Changed remaining ~gmailer~ references to ~mailer~
    - Fixed bug where temp file name in ~org-mailer-send-via-mailer~ was out of
      scope for the ~unwind-protect~
+
+** [2023-01-19 Thu 08:31]
+   - Fixed some excursion bug in mailer

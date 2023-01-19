@@ -1,13 +1,13 @@
 ;;; org-mailer.el --- Functions to integrate `org-mode' and `mu4e' ;;; -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2019,2020,2021,2022
+;; Copyright (C) 2019,2020,2021,2022,2023
 ;; Akshay Badola
 
 ;; Author:	Akshay Badola <akshay.badola.cs@gmail.com>
 ;; Maintainer:	Akshay Badola <akshay.badola.cs@gmail.com>
-;; Time-stamp:	<Thursday 17 November 2022 09:03:18 AM IST>
+;; Time-stamp:	<Thursday 19 January 2023 08:33:15 AM IST>
 ;; Keywords:	org, mu4e, mail, org-mime
-;; Version:     0.2.2
+;; Version:     0.2.3
 
 ;; This file is *NOT* part of GNU Emacs.
 
@@ -153,10 +153,9 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
 (defun org-mailer-convert-file-links-to-references ()
   "Convert org file links to internal links."
   (let* ((link-re util/org-fuzzy-or-custom-id-link-re)
-         (links (with-current-buffer org-mailer-source-buffer
-                  (-uniq (save-restriction
-                           (util/org-get-text-links link-re t t)))))
-         (level (org-current-level)))
+         (links (-uniq (save-restriction
+                         (util/org-get-text-links link-re nil t))))
+         (level (or (org-current-level) 1)))
     (setq links (mapcar (lambda (x)
                           (pcase-let* ((item (cadr x))
                                        (custid (string-match-p "^#" (cadr (split-string item "::"))))
@@ -172,7 +171,8 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
                                            (util/org-get-subtree-with-body-for-heading-matching-re re))))
                                     (if (string-match-p "[a-zA-Z]+[0-9]\\{4\\}.+" re)
                                         subtree
-                                      (warn "Link %s is not a publication. Not inserting references." re) nil)))))))
+                                      (warn "Link %s is not a publication. Not inserting references." re)
+                                      nil)))))))
                         links))
     (org-end-of-subtree t)
     (seq-do (lambda (x) (org-paste-subtree (+ 1 level) x)) (-filter 'identity links))))
