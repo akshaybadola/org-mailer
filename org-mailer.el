@@ -5,9 +5,9 @@
 
 ;; Author:	Akshay Badola <akshay.badola.cs@gmail.com>
 ;; Maintainer:	Akshay Badola <akshay.badola.cs@gmail.com>
-;; Time-stamp:	<Thursday 19 January 2023 08:33:15 AM IST>
+;; Time-stamp:	<Saturday 04 February 2023 00:24:16 AM IST>
 ;; Keywords:	org, mu4e, mail, org-mime
-;; Version:     0.2.3
+;; Version:     0.2.4
 
 ;; This file is *NOT* part of GNU Emacs.
 
@@ -74,13 +74,13 @@ Must be defined and maintained by the user.  It should consist
 `local-file;remote-file' pairs of lines of texts with a `;'
 delimiter")
 
-(defvar org-mailer-mail-subtree-preprocess-hook nil
-  "Preprocessing functions for `org-mailer-mail-subtree'.
+(defvar org-mailer-mail-preprocess-hook nil
+  "Preprocessing functions for `org-mailer-compose'.
 The functions in this hook are executed just after inserting
 contents of org subtree.")
 
-(defvar org-mailer-mail-subtree-postprocess-hook nil
-  "Postprocessing functions for `org-mailer-mail-subtree'.
+(defvar org-mailer-mail-postprocess-hook nil
+  "Postprocessing functions for `org-mailer-compose'.
 The functions in this hook are executed just before the temp org
 buffer is converted to html.")
 
@@ -90,17 +90,17 @@ buffer is converted to html.")
 (defvar org-mailer-after-send-hook '(org-mailer-cleanup)
   "Hook to run after sending mail via `org-mailer'.")
 
-;; (setq org-mailer-mail-subtree-preprocess-hook nil)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hook
+;; (setq org-mailer-mail-preprocess-hook nil)
+(add-to-list 'org-mailer-mail-preprocess-hook
              #'org-mailer-remove-useless-items-from-buffer)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hook
+(add-to-list 'org-mailer-mail-preprocess-hook
              #'org-mailer-convert-pdf-links-to-gdrive)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hook
+(add-to-list 'org-mailer-mail-preprocess-hook
              #'org-mailer-insert-urls-in-properties-to-body)
-(add-to-list 'org-mailer-mail-subtree-preprocess-hook
+(add-to-list 'org-mailer-mail-preprocess-hook
              #'org-mailer-convert-file-links-to-references)
-(add-to-list 'org-mailer-mail-subtree-postprocess-hook
-             #'util/org-remove-all-drawers)
+(add-to-list 'org-mailer-mail-postprocess-hook
+             #'org-mailer-remove-all-drawers)
 
 (defun org-mailer-install-py-deps ()
   (let* ((packages (shell-command-to-string "pip freeze"))
@@ -152,10 +152,16 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
 (defvar org-mailer-source-buffer nil)
 (defun org-mailer-convert-file-links-to-references ()
   "Convert org file links to internal links."
+  (goto-char (point-min))
   (let* ((link-re util/org-fuzzy-or-custom-id-link-re)
          (links (-uniq (save-restriction
-                         (util/org-get-text-links link-re nil t))))
-         (level (or (org-current-level) 1)))
+                         (util/org-get-text-links link-re nil nil nil t))))
+         (level (or (org-current-level) 1))
+         headings)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\*+ \\(.+\\)" nil t)
+        (push (match-string 1) headings)))
     (setq links (mapcar (lambda (x)
                           (pcase-let* ((item (cadr x))
                                        (custid (string-match-p "^#" (cadr (split-string item "::"))))
@@ -175,7 +181,15 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
                                       nil)))))))
                         links))
     (org-end-of-subtree t)
-    (seq-do (lambda (x) (org-paste-subtree (+ 1 level) x)) (-filter 'identity links))))
+    (when links
+      (unless (and headings (member "References" headings))
+        (org-insert-heading)
+        (org-edit-headline "References")
+        (when (= (org-current-level) 1)
+          (org-demote-subtree)
+          (setq level (+ 1 level))))
+      (org-end-of-subtree t)
+      (seq-do (lambda (x) (org-paste-subtree (+ 1 level) x)) (-filter 'identity links)))))
 
 (defun org-mailer-replace-pdf-link-with-gdrive (cache)
   "Replace pdf file URIs for current heading with gdrive links.
@@ -278,15 +292,92 @@ replying/forwarding etc.  Derived from
           (org-mime-htmlize))
       (org-mime-org-buffer-htmlize))))
 
+(defun org-mailer-remove-all-drawers (body plain)
+  "Remove all drawers from PLAIN text of an org buffer.
+BODY is returned as is."
+  (with-temp-buffer
+    (insert plain)
+    (org-mode)
+    (goto-char (point-min))
+    (org-with-wide-buffer
+     (while (re-search-forward org-drawer-regexp nil t)
+       (util/org-remove-drawer-at)))
+    (list body (buffer-string))))
+
+(defun org-mailer-export-buffer-or-subtree (subtreep)
+  "Derived from `org-mime-export-buffer-or-subtree'.
+
+Has additional hook `org-mailer-mail-postprocess-hook' which is
+called with body and plain text just before they are returned.
+
+`org-mailer-mail-postprocess-hook' is not a regular hook and it
+operates more like a pipe with the return value of each function
+in the hook being passed to the next function in the hook."
+  (let* ((opts (org-mime-get-export-options subtreep))
+         (plain (org-mime-export-ascii-maybe (buffer-string) (buffer-string)))
+         (buf (org-export-to-buffer 'html "*Org Mime Export*" nil subtreep nil t opts))
+         (body (prog1
+                   (with-current-buffer buf
+                     (buffer-string))
+                 (kill-buffer buf))))
+    (if org-mailer-mail-postprocess-hook
+        (cl-loop
+         for f in org-mailer-mail-postprocess-hook
+         do
+         (pcase-setq `(,body ,plain) (funcall f body plain))
+         finally
+         return  (cons body plain))
+      (cons body plain))))
+
+(defun org-mailer-org-buffer-htmlize ()
+  "Create an email buffer of the current org buffer.
+
+Derived from `org-mime-org-buffer-htmlize' but calls
+`org-mailer-export-buffer-or-subtree' instead of
+`org-mime-export-buffer-or-subtree'.
+
+The email buffer will contain both html and in org formats as mime
+alternatives.
+
+The following file keywords can be used to control the headers:
+#+MAIL_TO: some1@some.place
+#+MAIL_SUBJECT: a subject line
+#+MAIL_CC: some2@some.place
+#+MAIL_BCC: some3@some.place
+#+MAIL_FROM: sender@some.place
+
+The cursor ends in the TO field."
+  (interactive)
+  (run-hooks 'org-mime-send-buffer-hook)
+  (let* ((org-html-klipsify-src nil)
+         (region-p (org-region-active-p))
+         (file (buffer-file-name (current-buffer)))
+         (props (org-mime-buffer-properties))
+         (subject (or (plist-get props :MAIL_SUBJECT)
+                      (org-mime--get-buffer-title)
+                      (if (not file) (buffer-name (buffer-base-buffer))
+                        (file-name-sans-extension
+                         (file-name-nondirectory file)))))
+         (exported (org-mailer-export-buffer-or-subtree nil))
+         (to (plist-get props :MAIL_TO))
+         (cc (plist-get props :MAIL_CC))
+         (bcc (plist-get props :MAIL_BCC))
+         (from (plist-get props :MAIL_FROM))
+         (other-headers (org-mime-build-mail-other-headers cc
+                                                           bcc
+                                                           from)))
+    (org-mime-compose exported file to subject other-headers nil)
+    (message-goto-to)))
+
 (defun org-mailer-htmlize-current-buffer ()
-  "Export current buffer with `org-mime-htmlize'.
-Prior to export `org-mailer-mail-subtree-postprocess-hook' is run
+  "Export current buffer with `org-mailer-org-buffer-htmlize'.
+
+Prior to export `org-mailer-mail-postprocess-hook' is run
 on the current buffer.
 
 With a single prefix arg `C-u' export to an existing
 `mu4e-compose' buffer with `org-mailer-mime-htmlize'."
   (org-mailer-load-links-cache)
-  (run-hook-with-args 'org-mailer-mail-subtree-postprocess-hook)
   (let ((org-export-with-toc nil)
         (org-export-with-broken-links 'mark)
         (org-export-with-timestamps nil)
@@ -312,7 +403,7 @@ With a single prefix arg `C-u' export to an existing
                                 :with-properties nil)))
         (if current-prefix-arg
             (org-mailer-mime-htmlize buf-string)
-          (org-mime-org-buffer-htmlize))))))
+          (org-mailer-org-buffer-htmlize))))))
 
 ;; Another implementation with `org-mime' is given here, though not it's not
 ;; necessarily for mailing a subtree
@@ -323,11 +414,8 @@ With a single prefix arg `C-u' export to an existing
 `org-mailer-htmlize-current-buffer' and if non-nil then ask for an
 existing `mu4e-compose' buffer to insert the file.
 
-It runs two hooks:
-1. `org-mailer-mail-subtree-preprocess-hook' just after inserting
-the subtree in the temp buffer.
-2. `org-mailer-mail-subtree-postprocess-hook' is run after the
-links cache is loaded and before it's exported to html."
+It runs `org-mailer-mail-preprocess-hook' just after inserting
+the subtree in the temp buffer."
   (interactive)
   (setq org-mailer-source-buffer (current-buffer))
   (unless org-mailer-links-cache
@@ -345,7 +433,7 @@ links cache is loaded and before it's exported to html."
         (goto-char (point-min))
         (insert (concat buf-string "\n"))
         (org-mode)
-        (run-hook-with-args 'org-mailer-mail-subtree-preprocess-hook)
+        (run-hook-with-args 'org-mailer-mail-preprocess-hook)
         (org-show-all)
         (setq-local org-finish-function #'org-mailer-htmlize-current-buffer)
         (goto-char (point-min))

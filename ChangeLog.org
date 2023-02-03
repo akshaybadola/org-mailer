@@ -39,3 +39,14 @@
 
 ** [2023-01-19 Thu 08:31]
    - Fixed some excursion bug in mailer
+
+** [2023-02-04 Sat 00:14]
+   - In ~org-mailer-convert-file-links-to-references~, References in org-mailer
+     are now inserted in a separate heading.
+   - Added function ~org-mailer-export-buffer-or-subtree~ which runs
+     ~org-mailer-mail-postprocess-hook~ before the body and text are returned.
+     Required for doing org stuff in buffer and then removing stuff,
+     e.g. drawers contain custom-ids which are used to generate links. After
+     that only are they removed.
+   - Added ~org-mailer-org-buffer-htmlize~ which actually calls
+     ~org-mailer-export-buffer-or-subtree~
