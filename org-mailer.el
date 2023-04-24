@@ -5,9 +5,9 @@
 
 ;; Author:	Akshay Badola <akshay.badola.cs@gmail.com>
 ;; Maintainer:	Akshay Badola <akshay.badola.cs@gmail.com>
-;; Time-stamp:	<Saturday 04 February 2023 00:24:16 AM IST>
+;; Time-stamp:	<Monday 24 April 2023 12:24:43 PM IST>
 ;; Keywords:	org, mu4e, mail, org-mime
-;; Version:     0.2.4
+;; Version:     0.2.5
 
 ;; This file is *NOT* part of GNU Emacs.
 
@@ -155,7 +155,7 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
   (goto-char (point-min))
   (let* ((link-re util/org-fuzzy-or-custom-id-link-re)
          (links (-uniq (save-restriction
-                         (util/org-get-text-links link-re nil nil nil t))))
+                         (util/org-get-text-links link-re nil))))
          (level (or (org-current-level) 1))
          headings)
     (save-excursion
@@ -164,23 +164,26 @@ See `util/org-remove-list-items-matching-re-from-buffer' and
         (push (match-string 1) headings)))
     (setq links (mapcar (lambda (x)
                           (pcase-let* ((item (cadr x))
-                                       (custid (string-match-p "^#" (cadr (split-string item "::"))))
-                                       (`(,file ,re) (split-string item "::[*#]"))
-                                       (buf (or (get-buffer (f-filename file))
-                                                (find-file-noselect file))))
-                            (with-current-buffer buf
-                              (save-excursion
-                                (save-restriction
-                                  (let ((subtree
-                                         (if custid
-                                             (util/org-get-subtree-with-body-for-custom-id re)
-                                           (util/org-get-subtree-with-body-for-heading-matching-re re))))
-                                    (if (string-match-p "[a-zA-Z]+[0-9]\\{4\\}.+" re)
-                                        subtree
-                                      (warn "Link %s is not a publication. Not inserting references." re)
-                                      nil)))))))
+                                       (custid (when (cadr (split-string item "::"))
+                                                 (string-match-p "^#" (cadr (split-string item "::")))))
+                                       (`(,file ,re) (when custid (split-string item "::[*#]")))
+                                       (buf (when file (or (get-buffer (f-filename file))
+                                                             (find-file-noselect file)))))
+                            (when buf
+                              (with-current-buffer buf
+                                (save-excursion
+                                  (save-restriction
+                                    (let ((subtree
+                                           (if custid
+                                               (util/org-get-subtree-with-body-for-custom-id re t)
+                                             (util/org-get-subtree-with-body-for-heading-matching-re re t))))
+                                      (if (string-match-p "[a-zA-Z]+[0-9]\\{4\\}.+" re)
+                                          subtree
+                                        (warn "Link %s is not a publication. Not inserting references." re)
+                                        nil))))))))
                         links))
     (org-end-of-subtree t)
+    (util/org-make-links-local link-re)
     (when links
       (unless (and headings (member "References" headings))
         (org-insert-heading)

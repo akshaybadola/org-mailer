@@ -50,3 +50,8 @@
      that only are they removed.
    - Added ~org-mailer-org-buffer-htmlize~ which actually calls
      ~org-mailer-export-buffer-or-subtree~
+
+** [2023-04-24 Mon 12:23]
+   - Bug fix for ~org-mailer-compose~ where repeated compose calls would throw
+     errors for unresolved links because the file path was stripped from
+     links already.
